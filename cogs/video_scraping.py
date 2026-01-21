@@ -8,7 +8,7 @@ class VideoScraping(commands.Cog):
         self.bot = bot
         
         # 👇 設定發送影片通知的頻道 ID
-        self.target_channel_id = 1463387865202556979
+        self.target_channel_id = 1463483175639584840
         
         # 👇 YouTube 頻道清單
         self.youtube_channels = {
