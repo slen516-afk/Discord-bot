@@ -13,8 +13,8 @@ class VideoScraping(commands.Cog):
         # 👇 YouTube 頻道清單
         self.youtube_channels = {
             "Modern Wisdom": "UCIaH-gZIVC432YRjNVvnyCA",
-            "Andrew_Huberman": "UC2D2CMWXMOVWx7giW1n3LIg",
-            "Hamza_Ahmed": "UCWsslCoN3b_wBaFVWK_ye_A",
+            "Andrew Huberman": "UC2D2CMWXMOVWx7giW1n3LIg",
+            "Hamza Ahmed": "UCWsslCoN3b_wBaFVWK_ye_A",
             "The Diary of a CEO": "UCGq-a57w-aPwyi3pW7XLiHw",
             "HealthyGamerGG":"UClHVl2N3jPEbkNJVx-ItQIQ",
             "Mark Manson":"UC0TnW9acNxqeojxXDMbohcA",
