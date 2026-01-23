@@ -12,37 +12,36 @@ class AIChat(commands.Cog):
         self.model = None 
         
         # ---------------------------------------------------------
-        # 👇【修改處 1】請在這裡填入你要自動對話的「頻道 ID」(數字)
-        # 如何取得 ID：Discord 設定 -> 進階 -> 開啟開發者模式 -> 右鍵點頻道 -> 複製 ID
+        # 👇 你的自動對話頻道 ID
         self.auto_chat_channel_id = 1463744730243399842
         # ---------------------------------------------------------
 
         if self.api_key:
             genai.configure(api_key=self.api_key)
-            print("----- 正在搜尋可用模型 -----")
-            available_models = []
+            
+            # ---------------------------------------------------------
+            # 👇【策略切換】Flash 全滅，改用實驗版 'gemini-exp-1206'
+            # 這個模型比 Flash 更聰明，而且額度池通常是分開的
+            # ---------------------------------------------------------
+            target_model = 'gemini-exp-1206'
+            print(f"👉 嘗試設定模型為: {target_model}")
+            
+            sys_instruction = (
+                "你是一個 Discord 機器人助手，你的核心模型是 Google Gemini Exp 1206。"
+                "回答請保持簡潔有力。"
+                "如果不清楚時間，請參考 User 訊息中提供的系統時間資訊。"
+                "如果用戶詢問你的版本或模型，請明確回答你是 'Gemini Exp 1206'。"
+            )
+            
             try:
-                for m in genai.list_models():
-                    if 'generateContent' in m.supported_generation_methods:
-                        available_models.append(m.name)
+                self.model = genai.GenerativeModel(
+                    target_model,
+                    system_instruction=sys_instruction
+                )
+                self.chat_session = self.model.start_chat(history=[])
+                print(f"✅ Gemini 模型初始化成功 ({target_model})")
             except Exception as e:
-                print(f"❌ API 連線失敗: {e}")
-
-            if 'models/gemini-1.5-flash' in available_models:
-                target_model = 'gemini-1.5-flash'
-            elif 'models/gemini-pro' in available_models:
-                target_model = 'gemini-pro'
-            elif available_models:
-                target_model = available_models[0]
-            else:
-                target_model = 'gemini-pro'
-
-            print(f"👉 決定使用模型: {target_model}")
-            
-            system_instruction = "你是一個 Discord 機器人助手。如果不清楚時間，請參考 User 訊息中提供的系統時間資訊。"
-            
-            self.model = genai.GenerativeModel(target_model)
-            self.chat_session = self.model.start_chat(history=[])
+                print(f"❌ 模型初始化失敗: {e}")
         else:
             print("⚠️ 警告：找不到 GEMINI_API_KEY")
 
@@ -63,7 +62,15 @@ class AIChat(commands.Cog):
             response = await self.chat_session.send_message_async(prompt_with_time)
             return response.text
         except Exception as e:
-            return f"腦袋打結了... (錯誤: {e})"
+            error_msg = str(e)
+            if "429" in error_msg:
+                # 如果連這裡也 429，那就是整個 Google 帳號都被暫時鎖額度了
+                print(f"❌ 額度全滅: {e}")
+                return "💀 AI 徹底掛了 (此帳號今日額度全數用盡，請申請新的 API Key)"
+            elif "404" in error_msg:
+                return f"❌ 找不到模型 ({self.model.model_name if self.model else '未知'})"
+            else:
+                return f"腦袋打結了... (錯誤: {error_msg})"
 
     @commands.command()
     async def chat(self, ctx, *, message=None):
@@ -78,30 +85,21 @@ class AIChat(commands.Cog):
             else:
                 await ctx.send(response)
 
-    # 👇【修改處 2】監聽所有訊息的邏輯更新
     @commands.Cog.listener()
     async def on_message(self, message):
-        # 1. 忽略機器人自己的訊息
         if message.author == self.bot.user: 
             return
 
-        # 2. 判斷是否在「自動對話頻道」
-        # 如果頻道 ID 吻合，且訊息不是空白 (例如只有圖片)
         if message.channel.id == self.auto_chat_channel_id and message.content.strip():
-            
-            # (選用) 如果訊息是指令開頭 (例如 !help)，就跳過，交給指令系統處理
-            # 如果你不希望在該頻道使用任何指令，可以拿掉這兩行
             ctx = await self.bot.get_context(message)
             if ctx.valid: 
                 return 
 
-            # 開始 AI 回覆
             async with message.channel.typing():
                 response = await self.get_ai_response(message.content)
                 await message.reply(response)
-            return # 處理完畢，結束函式
+            return 
 
-        # 3. 原有的 Mention (@機器人) 邏輯
         if self.bot.user.mentioned_in(message):
             clean_text = message.content.replace(f'<@{self.bot.user.id}>', '').strip()
             if not clean_text:
