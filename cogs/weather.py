@@ -1,28 +1,27 @@
 import discord
 from discord.ext import commands, tasks
-import requests
 import datetime
 import urllib.parse
+import aiohttp # 👈 改用這個
+import asyncio # 👈 用來休息緩衝
 
 class Weather(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         
-        # 👇 【這裡修改】地點清單 + 指定頻道
-        # 格式：{"name": "名稱", "lat": 緯度, "lon": 經度, "channel_id": 頻道ID}
-        # 這樣你就可以讓台北報在頻道A，新北報在頻道B (如果是同一個頻道，ID 填一樣的就好)
+        # 👇 地點清單
         self.daily_locations = [
             {
                 "name": "台北市", 
                 "lat": 25.0330, 
                 "lon": 121.5654, 
-                "channel_id": 1463412543128211641  # 👈 指定台北要在這裡報
+                "channel_id": 1463412543128211641
             },
             {
                 "name": "新北市", 
                 "lat": 25.0143, 
                 "lon": 121.4672, 
-                "channel_id": 1463412543128211641  # 👈 指定新北要在這裡報 (可以跟上面不同)
+                "channel_id": 1463412543128211641
             },
         ]
 
@@ -32,37 +31,47 @@ class Weather(commands.Cog):
     def cog_unload(self):
         self.daily_forecast_task.cancel()
 
-    # --- 小幫手 1: 取得經緯度 (手動查詢用) ---
-    def get_coords(self, city_name):
+    # --- 小幫手 1: 取得經緯度 (改為非同步) ---
+    async def get_coords(self, city_name):
         try:
             encoded_name = urllib.parse.quote(city_name)
             url = f"https://geocoding-api.open-meteo.com/v1/search?name={encoded_name}&count=1&language=zh&format=json"
-            response = requests.get(url)
-            data = response.json()
-            if "results" in data and len(data["results"]) > 0:
-                result = data["results"][0]
-                return result["latitude"], result["longitude"], result["name"]
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        if "results" in data and len(data["results"]) > 0:
+                            result = data["results"][0]
+                            return result["latitude"], result["longitude"], result["name"]
             return None, None, None
-        except:
+        except Exception as e:
+            print(f"❌ 找地點失敗: {e}")
             return None, None, None
 
-    # --- 小幫手 2: 取得天氣資料 ---
-    def get_weather_data(self, lat, lon):
+    # --- 小幫手 2: 取得天氣資料 (改為非同步) ---
+    async def get_weather_data(self, lat, lon):
         try:
             url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&daily=weathercode,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=auto"
-            response = requests.get(url)
-            data = response.json()
-            daily = data.get("daily", {})
-            if not daily: return None
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as response:
+                    if response.status != 200:
+                        print(f"⚠️ API 回傳錯誤代碼: {response.status}")
+                        return None
+                    
+                    data = await response.json()
+                    daily = data.get("daily", {})
+                    if not daily: return None
 
-            return {
-                "max": daily["temperature_2m_max"][0],
-                "min": daily["temperature_2m_min"][0],
-                "rain": daily["precipitation_probability_max"][0],
-                "status": self.weather_code_to_text(daily["weathercode"][0])
-            }
+                    return {
+                        "max": daily["temperature_2m_max"][0],
+                        "min": daily["temperature_2m_min"][0],
+                        "rain": daily["precipitation_probability_max"][0],
+                        "status": self.weather_code_to_text(daily["weathercode"][0])
+                    }
         except Exception as e:
-            print(f"氣象抓取錯誤: {e}")
+            print(f"❌ 氣象抓取錯誤: {e}")
             return None
 
     # --- 小幫手 3: 天氣代碼轉文字 ---
@@ -82,44 +91,46 @@ class Weather(commands.Cog):
     @commands.command()
     async def weather(self, ctx, *, city: str = None):
         if not city:
-            # 沒輸入地點，就抓清單裡的第一個
             loc = self.daily_locations[0]
             city, lat, lon = loc["name"], loc["lat"], loc["lon"]
         else:
             await ctx.send(f"🔍 正在搜尋「{city}」的天氣...")
-            lat, lon, real_name = self.get_coords(city)
+            # 這裡要加 await
+            lat, lon, real_name = await self.get_coords(city)
             if not lat:
                 await ctx.send(f"❌ 找不到「{city}」這個地方。")
                 return
             city = real_name
 
-        data = self.get_weather_data(lat, lon)
+        # 這裡要加 await
+        data = await self.get_weather_data(lat, lon)
+        
         if data:
             embed = discord.Embed(title=f"🌍 {city} 天氣預報", color=0x00b0f4)
             embed.add_field(name="天氣狀況", value=data['status'], inline=False)
             embed.add_field(name="氣溫", value=f"{data['min']}°C ~ {data['max']}°C", inline=True)
             embed.add_field(name="降雨機率", value=f"{data['rain']}%", inline=True)
             await ctx.send(embed=embed)
+        else:
+            await ctx.send("❌ 無法取得天氣資料，請稍後再試。")
 
     # ===============================
-    #  功能 2: 每天早上 06:00 自動預報 (支援指定頻道)
+    #  功能 2: 每天定時自動預報
     # ===============================
     broadcast_time = datetime.time(hour=22, minute=0, second=0)
 
     @tasks.loop(time=broadcast_time)
     async def daily_forecast_task(self):
-        # 跑迴圈，檢查每一個設定的地點
         for loc in self.daily_locations:
-            
-            # 👇 關鍵修改：從清單裡讀取該地點專屬的 Channel ID
             target_id = loc.get("channel_id")
             channel = self.bot.get_channel(target_id)
             
             if not channel:
                 print(f"❌ 找不到頻道 ID: {target_id}")
-                continue # 如果找不到頻道，就跳過這個，繼續下一個
+                continue
 
-            data = self.get_weather_data(loc["lat"], loc["lon"])
+            # 抓取天氣 (加 await)
+            data = await self.get_weather_data(loc["lat"], loc["lon"])
             
             if data:
                 embed = discord.Embed(
@@ -134,6 +145,13 @@ class Weather(commands.Cog):
                     embed.set_footer(text="☔ 記得帶傘！")
                 
                 await channel.send(embed=embed)
+                print(f"✅ 已發送 {loc['name']} 天氣")
+            else:
+                print(f"❌ {loc['name']} 天氣資料抓取失敗")
+
+            # 👇【關鍵修改】每報完一個城市，休息 3 秒
+            # 這能防止 API 因為連續請求而拒絕連線
+            await asyncio.sleep(3)
 
     @daily_forecast_task.before_loop
     async def before_forecast(self):
