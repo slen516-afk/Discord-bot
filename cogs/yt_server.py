@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 from aiohttp import web
 import asyncio
+import os  # <--- 這個一定要有
 
 # 設定你想要 Bot 發送訊息的頻道 ID
 TARGET_CHANNEL_ID = 1464948032100634750
@@ -19,30 +20,37 @@ class YTServer(commands.Cog):
         self.runner = None
         self.site = None
 
+    # 👇👇👇 這裡是被修改的地方 👇👇👇
     async def cog_load(self):
         self.runner = web.AppRunner(self.app)
         await self.runner.setup()
-        self.site = web.TCPSite(self.runner, '127.0.0.1', 5000)
+        
+        # 修改 1: 從環境變數抓 Port (Zeabur 會自動分配，如果沒有就用 5000)
+        port = int(os.getenv("PORT", 5000))
+        
+        # 修改 2: 監聽 0.0.0.0 (這樣外部才連得進來)
+        self.site = web.TCPSite(self.runner, '0.0.0.0', port)
+        
         await self.site.start()
-        print("🌐 Bot 內部 Web Server 已啟動：http://127.0.0.1:5000")
+        print(f"🌐 Bot 內部 Web Server 已啟動，監聽 Port: {port}")
+    # 👆👆👆 修改結束 👆👆👆
 
     async def cog_unload(self):
         if self.runner:
             await self.runner.cleanup()
 
-    # --- 新增這個函數來處理瀏覽器的安全檢查 ---
+    # --- 處理瀏覽器的安全檢查 (CORS) ---
     async def handle_options(self, request):
         return web.Response(status=200, headers={
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Methods": "POST, OPTIONS",
             "Access-Control-Allow-Headers": "Content-Type",
-            "Access-Control-Allow-Private-Network": "true" # 允許公網(YT)訪問私網(Localhost)
+            "Access-Control-Allow-Private-Network": "true"
         })
 
     async def handle_pause(self, request):
         """處理來自瀏覽器的暫停請求"""
         
-        # 準備回傳給瀏覽器的 Header (一定要加，不然瀏覽器不收)
         cors_headers = {
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Private-Network": "true"
@@ -65,7 +73,7 @@ class YTServer(commands.Cog):
                 embed.set_footer(text="來自 Chrome 擴充功能")
                 
                 await channel.send(embed=embed)
-                print(f"已傳送: {title} 到 Discord") # 在終端機印出確認
+                print(f"已傳送: {title} 到 Discord")
                 return web.Response(text="Message Sent", headers=cors_headers)
             else:
                 print(f"❌ 找不到頻道 ID: {TARGET_CHANNEL_ID}，請檢查 Bot 是否在該伺服器且有權限")
