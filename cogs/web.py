@@ -10,8 +10,9 @@ class WebServer(commands.Cog):
         self.app = web.Application()
         self.runner = None
         self.site = None
+        self.is_running = False # 防止重複啟動的開關
         
-        # 設定全域 CORS (所有接進來的路由都自動支援跨域)
+        # 設定 CORS (解決跨域問題)
         self.app.on_response_prepare.append(self.cors_handler)
 
     async def cors_handler(self, request, response):
@@ -26,16 +27,29 @@ class WebServer(commands.Cog):
             self.app.router.add_post(path, handler)
         elif method == 'GET':
             self.app.router.add_get(path, handler)
-        # 自動補上 OPTIONS (給瀏覽器檢查用)
         self.app.router.add_options(path, lambda r: web.Response(status=200))
 
-    async def cog_load(self):
+    # ❌ 刪除了 cog_load 裡的啟動邏輯，避免太早鎖門
+
+    # ✅ 改到 on_ready (Bot 準備好後) 才啟動
+    @commands.Cog.listener()
+    async def on_ready(self):
+        # 如果已經啟動過，就不要再啟動 (避免重連時報錯)
+        if self.is_running:
+            return
+
+        print("⏳ [總機] 等待模組掛載中...")
+        # 等個 3 秒，確保 yt_server 和 map_server 都已經跑完 cog_load 把路徑掛上去了
+        await asyncio.sleep(3) 
+
         self.runner = web.AppRunner(self.app)
         await self.runner.setup()
-        port = int(os.getenv("PORT", 8080)) # Zeabur 預設
+        port = int(os.getenv("PORT", 8080))
         self.site = web.TCPSite(self.runner, '0.0.0.0', port)
         await self.site.start()
-        print(f"🌐 [總機] Web Server 已啟動，監聽 Port: {port}")
+        
+        self.is_running = True
+        print(f"🌐 [總機] Web Server 已正式啟動 (Port: {port}) - 大門已開！")
 
     async def cog_unload(self):
         if self.runner:
