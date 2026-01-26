@@ -7,7 +7,6 @@ import asyncio
 import os
 import urllib.parse
 
-# --- 地圖專用資料結構 ---
 class LocationData:
     def __init__(self, name, description, category, tags):
         self.name = name
@@ -20,9 +19,11 @@ class PlaceSelect(Select):
         options = []
         for index, place in enumerate(places):
             emoji = "🍴" if "食" in place.category else "🎉"
+            # ✅ 修正點：強制截斷標籤長度，確保在 1-100 字元內
+            safe_label = place.name[:80] if place.name else f"地點 {index+1}"
             options.append(discord.SelectOption(
-                label=place.name[:25], 
-                description=place.category, 
+                label=safe_label, 
+                description=place.category[:50], 
                 emoji=emoji, 
                 value=str(index)
             ))
@@ -31,13 +32,12 @@ class PlaceSelect(Select):
 
     async def callback(self, interaction: discord.Interaction):
         place = self.places[int(self.values[0])]
-        # 製作 Google Maps 搜尋連結
         search_query = urllib.parse.quote(place.name)
         map_url = f"https://www.google.com/maps/search/?api=1&query={search_query}"
         
         embed = discord.Embed(title=f"📍 {place.name}", description=place.description, color=discord.Color.blue())
-        embed.add_field(name="類別", value=place.category)
-        embed.add_field(name="標籤", value=place.tags)
+        embed.add_field(name="類別", value=place.category, inline=True)
+        embed.add_field(name="標籤", value=place.tags, inline=True)
         embed.set_footer(text="Gemini 推薦")
         
         view = View()
@@ -55,74 +55,51 @@ class MapServer(commands.Cog):
         if web_cog:
             web_cog.add_route('POST', '/recommend', self.handle_recommend)
             print("✅ [地圖] /recommend 路徑已掛載 (Active Mount)")
-        else:
-            print("❌ [地圖] 無法掛載！找不到 WebServer")
 
     async def handle_recommend(self, request):
         try:
             data = await request.json()
-            
-            # 🛠️ 修正重點：在這裡加上 float() 強制轉換！
-            # 避免 iOS 傳來字串導致後面的 f-string 報錯
             try:
                 lat = float(data.get('lat'))
                 lon = float(data.get('lon'))
-            except (ValueError, TypeError):
-                return web.Response(text="Invalid GPS Data format", status=400)
+            except:
+                return web.Response(text="Invalid GPS", status=400)
 
-            # 👇 修改這裡：從環境變數讀取 Map 專用頻道 ID
-            channel_id_str = os.getenv("MAP_CHANNEL_ID")
-            if not channel_id_str:
-                print("⚠️ 錯誤：Zeabur 環境變數未設定 MAP_CHANNEL_ID")
-                return web.Response(text="Server Config Error: MAP_CHANNEL_ID not set", status=500)
-
-            channel = self.bot.get_channel(int(channel_id_str))
+            channel_id = os.getenv("MAP_CHANNEL_ID")
+            channel = self.bot.get_channel(int(channel_id))
             if not channel: return web.Response(text="Channel Not Found", status=404)
 
-            # 先發送「思考中」訊息
-            msg = await channel.send(f"🛰️ 收到座標 ({lat}, {lon})，正在分析附近熱點...")
-            
-            # 呼叫 Gemini AI
-            # ... (前面的程式碼不用動)
+            msg = await channel.send(f"🛰️ 收到汐止座標 ({lat}, {lon})，正在搜尋在地美食...")
 
-            # 呼叫 Gemini AI
-            # 🛠️ 修改重點：加上「方圓 2 公里」和「行政區」的限制指令
+            # ✅ 修正點：改用你清單中最穩定的最新代號，並強化汐止在地搜尋指令
+            model = genai.GenerativeModel('models/gemini-flash-latest')
             prompt = (
-                f"使用者位於座標 {lat}, {lon}。"
-                f"請先判斷此座標位於哪個「行政區」（例如：新北市汐止區），"
-                f"並推薦 **該行政區內** 或是 **距離座標 2 公里內** 的 5 個在地隱藏美食或景點。"
-                f"⚠️ 重要限制：請不要推薦距離太遠（超過 5 公里）的跨區知名景點（例如不要推薦深坑、貓空、台北市中心，除非真的很近）。"
-                f"請專注於在地人會去的小吃、餐廳或公園。"
+                f"使用者目前位於座標 {lat}, {lon} (新北市汐止區)。"
+                f"請推薦該座標方圓 2 公里內的 5 個「在地美食」或「景點」。"
+                f"⚠️ 嚴格禁止推薦深坑、貓空、淡水或台北市中心等遙遠景點。"
+                f"請優先推薦汐止觀光夜市、忠孝東路商圈、中興路附近或遠雄廣場的店家。"
                 f"格式：名稱|介紹|類別|#標籤"
             )
             
-            model = genai.GenerativeModel('models/gemini-flash-latest')
-            # ... (後面的程式碼不用動)
             response = await asyncio.to_thread(model.generate_content, prompt)
             
-            # 解析 AI 回傳的資料
             places = []
             if response.text:
                 for line in response.text.strip().split('\n'):
                     parts = line.split('|')
                     if len(parts) >= 4:
-                        places.append(LocationData(parts[0], parts[1], parts[2], parts[3]))
+                        places.append(LocationData(parts[0][:100], parts[1], parts[2], parts[3]))
 
             if places:
                 view = View()
                 view.add_item(PlaceSelect(places))
-                
-                # 這裡原本會報錯的地方，現在因為 lat/lon 已經是數字了，所以會安全通過 ✅
-                await msg.edit(content=f"📍 座標 ({lat:.4f}, {lon:.4f}) 推薦清單：", view=view)
+                await msg.edit(content=f"📍 汐止區 ({lat:.4f}, {lon:.4f}) 附近推薦：", view=view)
                 return web.Response(text="OK")
             
-            await msg.edit(content="😵 這一帶好像很荒涼，AI 找不到推薦的地點。")
-            return web.Response(text="No Data Found")
-
+            return web.Response(text="No Data")
         except Exception as e:
             print(f"Map Error: {e}")
-            # 把詳細錯誤回傳給捷徑，方便除錯
-            return web.Response(text=f"Error: {str(e)}", status=500)
+            return web.Response(text=str(e), status=500)
 
 async def setup(bot):
     await bot.add_cog(MapServer(bot))
