@@ -83,8 +83,21 @@ class MapServer(commands.Cog):
             msg = await channel.send(f"🛰️ 收到座標 ({lat}, {lon})，正在分析附近熱點...")
             
             # 呼叫 Gemini AI
-            prompt = f"使用者位於座標 {lat},{lon}。請推薦附近 5 個地點(美食/景點)。格式：名稱|介紹|類別|#標籤"
+            # ... (前面的程式碼不用動)
+
+            # 呼叫 Gemini AI
+            # 🛠️ 修改重點：加上「方圓 2 公里」和「行政區」的限制指令
+            prompt = (
+                f"使用者位於座標 {lat}, {lon}。"
+                f"請先判斷此座標位於哪個「行政區」（例如：新北市汐止區），"
+                f"並推薦 **該行政區內** 或是 **距離座標 2 公里內** 的 5 個在地隱藏美食或景點。"
+                f"⚠️ 重要限制：請不要推薦距離太遠（超過 5 公里）的跨區知名景點（例如不要推薦深坑、貓空、台北市中心，除非真的很近）。"
+                f"請專注於在地人會去的小吃、餐廳或公園。"
+                f"格式：名稱|介紹|類別|#標籤"
+            )
+            
             model = genai.GenerativeModel('models/gemini-2.5-flash')
+            # ... (後面的程式碼不用動)
             response = await asyncio.to_thread(model.generate_content, prompt)
             
             # 解析 AI 回傳的資料
