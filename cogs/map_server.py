@@ -96,7 +96,7 @@ class MapServer(commands.Cog):
                 f"格式：名稱|介紹|類別|#標籤"
             )
             
-            model = genai.GenerativeModel('models/gemini-1.5-flash')
+            model = genai.GenerativeModel('models/gemini-2.0-flash')
             # ... (後面的程式碼不用動)
             response = await asyncio.to_thread(model.generate_content, prompt)
             
