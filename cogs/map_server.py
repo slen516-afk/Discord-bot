@@ -50,27 +50,25 @@ class MapServer(commands.Cog):
         api_key = os.getenv("GEMINI_API_KEY")
         if api_key: genai.configure(api_key=api_key)
 
-    # 當這個模組載入時，自動去掛載到 Web Server
     async def cog_load(self):
         web_cog = self.bot.get_cog('WebServer')
         if web_cog:
             web_cog.add_route('POST', '/recommend', self.handle_recommend)
             print("✅ [地圖] /recommend 路徑已掛載 (Active Mount)")
         else:
-            print("❌ [地圖] 無法掛載！找不到 WebServer") 
-        web_cog = self.bot.get_cog('WebServer')
-        if web_cog:
-            # 🔌 把自己的 handle_recommend 插到總機上
-            web_cog.add_route('POST', '/recommend', self.handle_recommend)
-            print("✅ [地圖] /recommend 路徑已掛載")
-        else:
-            print("❌ [地圖] 找不到 WebServer，無法掛載 API")
+            print("❌ [地圖] 無法掛載！找不到 WebServer")
 
     async def handle_recommend(self, request):
         try:
             data = await request.json()
-            lat, lon = data.get('lat'), data.get('lon')
-            if not lat: return web.Response(text="No GPS Data", status=400)
+            
+            # 🛠️ 修正重點：在這裡加上 float() 強制轉換！
+            # 避免 iOS 傳來字串導致後面的 f-string 報錯
+            try:
+                lat = float(data.get('lat'))
+                lon = float(data.get('lon'))
+            except (ValueError, TypeError):
+                return web.Response(text="Invalid GPS Data format", status=400)
 
             # 👇 修改這裡：從環境變數讀取 Map 專用頻道 ID
             channel_id_str = os.getenv("MAP_CHANNEL_ID")
@@ -100,6 +98,8 @@ class MapServer(commands.Cog):
             if places:
                 view = View()
                 view.add_item(PlaceSelect(places))
+                
+                # 這裡原本會報錯的地方，現在因為 lat/lon 已經是數字了，所以會安全通過 ✅
                 await msg.edit(content=f"📍 座標 ({lat:.4f}, {lon:.4f}) 推薦清單：", view=view)
                 return web.Response(text="OK")
             
@@ -108,7 +108,8 @@ class MapServer(commands.Cog):
 
         except Exception as e:
             print(f"Map Error: {e}")
-            return web.Response(text=str(e), status=500)
+            # 把詳細錯誤回傳給捷徑，方便除錯
+            return web.Response(text=f"Error: {str(e)}", status=500)
 
 async def setup(bot):
     await bot.add_cog(MapServer(bot))
