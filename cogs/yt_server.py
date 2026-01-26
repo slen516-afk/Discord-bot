@@ -4,48 +4,30 @@ from aiohttp import web
 import asyncio
 import os
 
-# 設定你想要 Bot 發送訊息的頻道 ID
-TARGET_CHANNEL_ID = 1464948032100634750
-
 class YTServer(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.app = web.Application()
-        
-        self.app.router.add_post('/pause', self.handle_pause)
-        self.app.router.add_options('/pause', self.handle_options)
-        
-        self.runner = None
-        self.site = None
-
-        # 記憶區
+        # 記憶區：用來記錄上一則訊息，做覆蓋用
         self.last_msg_id = None
         self.last_video_url = None
 
-    async def cog_load(self):
-        self.runner = web.AppRunner(self.app)
-        await self.runner.setup()
-        port = int(os.getenv("PORT", 5000))
-        self.site = web.TCPSite(self.runner, '0.0.0.0', port)
-        await self.site.start()
-        print(f"🌐 Bot 內部 Web Server 已啟動，監聽 Port: {port}")
+    # 當 Bot 準備好時，自動去跟 WebServer (總機) 報到
+    @commands.Cog.listener()
+    async def on_ready(self):
+        # 等個 1 秒確保總機已經啟動
+        await asyncio.sleep(1)
+        web_cog = self.bot.get_cog('WebServer')
+        
+        if web_cog:
+            # 🔌 把自己的 handle_pause 插到總機上
+            web_cog.add_route('POST', '/pause', self.handle_pause)
+            print("✅ [YT] /pause 路徑已掛載")
+        else:
+            print("❌ [YT] 嚴重錯誤：找不到 WebServer Cog，無法掛載 API！")
 
-    async def cog_unload(self):
-        if self.runner:
-            await self.runner.cleanup()
-
-    async def handle_options(self, request):
-        return web.Response(status=200, headers={
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type",
-            "Access-Control-Allow-Private-Network": "true"
-        })
-    
-    # 時間轉換工具 (把 "1:30" 變 90)
+    # 工具函式：把 "1:30" 轉成 90 秒
     def parse_time_to_seconds(self, time_str):
         try:
-            # 處理使用者可能輸入 "1.30" 或 "1:30" 的情況
             time_str = time_str.replace('.', ':').replace('：', ':')
             parts = time_str.split(':')
             if len(parts) == 3: # H:M:S
@@ -58,53 +40,50 @@ class YTServer(commands.Cog):
             return 0
         return 0
 
+    # 核心邏輯：處理 YouTube 請求
     async def handle_pause(self, request):
-        cors_headers = {
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Private-Network": "true"
-        }
-
         try:
             data = await request.json()
             title = data.get('title', '無標題')
             raw_url = data.get('url', '')
             timestamp = data.get('time', '0:00')
 
-            # 🛠️ 修正重點：不再暴力切割網址，改為「疊加參數」
-            final_url = raw_url
+            # 1. 讀取環境變數中的 YT 專用頻道 ID
+            channel_id_str = os.getenv("YT_CHANNEL_ID")
+            if not channel_id_str:
+                print("⚠️ 錯誤：Zeabur 環境變數未設定 YT_CHANNEL_ID")
+                return web.Response(text="Server Config Error: YT_CHANNEL_ID not set", status=500)
             
-            # 如果有輸入時間，就進行處理
+            channel = self.bot.get_channel(int(channel_id_str))
+            if not channel:
+                return web.Response(text="Channel Not Found", status=404)
+
+            # 2. 處理網址與時間跳轉
+            final_url = raw_url
             if timestamp and timestamp != '0:00':
                 seconds = self.parse_time_to_seconds(timestamp)
                 if seconds > 0:
-                    # 判斷網址原本有沒有問號 (?)
-                    # 如果有 (例如 watch?v=ID)，我們用 '&' 接在後面
-                    # 如果沒有 (例如 youtu.be/ID)，我們用 '?' 接在後面
+                    # 智慧判斷：原本有問號用 &，沒問號用 ?
                     separator = '&' if '?' in raw_url else '?'
                     final_url = f"{raw_url}{separator}t={seconds}s"
 
-            channel = self.bot.get_channel(TARGET_CHANNEL_ID)
-            if not channel:
-                return web.Response(text="Channel Not Found", status=404, headers=cors_headers)
-
-            # 建立 Embed
+            # 3. 建立 Embed
             embed = discord.Embed(
                 title="▶️ 正在觀看影片",
-                description=f"[{title}]({final_url})", # 使用正確帶時間的網址
+                description=f"[{title}]({final_url})", 
                 color=discord.Color.green()
             )
             embed.add_field(name="目前時間點", value=f"⏱️ **{timestamp}**", inline=True)
             
-            if title == "iOS 分享": # 識別是手機來的
+            if title == "iOS 分享":
                 embed.set_footer(text="來自 iPhone • 點擊標題跳轉")
             else:
                 embed.set_footer(text="來自 Chrome 擴充功能 • 點擊標題跳轉")
 
-            # 判斷是否為同一部影片 (這次用簡單的字串包含來判斷，避免切壞網址)
-            # 如果新的網址裡包含舊的網址 (或是反過來)，就當作同一部
+            # 4. 判斷是否覆蓋舊訊息 (同一部影片就編輯，不同部就發新的)
             is_same_video = False
             if self.last_video_url:
-                # 簡單比對：忽略參數後的網址是否相同
+                # 簡單比對網址 (忽略時間參數)
                 clean_new = raw_url.split('&')[0].split('?t=')[0]
                 clean_old = self.last_video_url.split('&')[0].split('?t=')[0]
                 if clean_new == clean_old:
@@ -114,21 +93,22 @@ class YTServer(commands.Cog):
                 try:
                     msg = await channel.fetch_message(self.last_msg_id)
                     await msg.edit(embed=embed)
-                    # 更新記憶中的 URL (用新的帶時間的)
-                    self.last_video_url = raw_url 
-                    return web.Response(text="Message Updated", headers=cors_headers)
+                    self.last_video_url = raw_url # 更新連結 (因為時間變了)
+                    return web.Response(text="Message Updated")
                 except discord.NotFound:
-                    pass
+                    pass # 舊訊息被刪了，就往下走發新的
 
+            # 發送新訊息
             msg = await channel.send(embed=embed)
             self.last_msg_id = msg.id
-            self.last_video_url = raw_url # 記住原始網址
+            self.last_video_url = raw_url
             
-            return web.Response(text="New Message Sent", headers=cors_headers)
+            return web.Response(text="New Message Sent")
 
         except Exception as e:
-            print(f"❌ API 錯誤: {e}")
-            return web.Response(text="Error", status=500, headers=cors_headers)
+            print(f"❌ YT API Error: {e}")
+            # CORS 已經由 web.py 處理，這裡只要回傳錯誤訊息即可
+            return web.Response(text=f"Error: {str(e)}", status=500)
 
 async def setup(bot):
     await bot.add_cog(YTServer(bot))
