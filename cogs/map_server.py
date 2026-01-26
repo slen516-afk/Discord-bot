@@ -18,16 +18,12 @@ class PlaceSelect(Select):
     def __init__(self, places):
         options = []
         for index, place in enumerate(places):
-            emoji = "🍴" if "食" in place.category else "🎉"
-            # ✅ 修正點：強制截斷標籤長度，確保在 1-100 字元內
-            safe_label = place.name[:80] if place.name else f"地點 {index+1}"
             options.append(discord.SelectOption(
-                label=safe_label, 
-                description=place.category[:50], 
-                emoji=emoji, 
-                value=str(index)
+                label=f"{index+1}. {place.name[:50]}",
+                value=str(index),
+                emoji="📍"
             ))
-        super().__init__(placeholder="📍 點擊選擇地點查看詳情...", min_values=1, max_values=1, options=options)
+        super().__init__(placeholder="🗺️ 點我開啟 Google Maps 導航...", options=options)
         self.places = places
 
     async def callback(self, interaction: discord.Interaction):
@@ -35,14 +31,9 @@ class PlaceSelect(Select):
         search_query = urllib.parse.quote(place.name)
         map_url = f"https://www.google.com/maps/search/?api=1&query={search_query}"
         
-        embed = discord.Embed(title=f"📍 {place.name}", description=place.description, color=discord.Color.blue())
-        embed.add_field(name="類別", value=place.category, inline=True)
-        embed.add_field(name="標籤", value=place.tags, inline=True)
-        embed.set_footer(text="Gemini 推薦")
-        
         view = View()
-        view.add_item(Button(label="🚀 Google Maps 導航", style=discord.ButtonStyle.link, url=map_url))
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        view.add_item(Button(label=f"開啟 {place.name} 導航", style=discord.ButtonStyle.link, url=map_url))
+        await interaction.response.send_message(f"已經為您準備好 **{place.name}** 的導航連結：", view=view, ephemeral=True)
 
 class MapServer(commands.Cog):
     def __init__(self, bot):
@@ -54,49 +45,54 @@ class MapServer(commands.Cog):
         web_cog = self.bot.get_cog('WebServer')
         if web_cog:
             web_cog.add_route('POST', '/recommend', self.handle_recommend)
-            print("✅ [地圖] /recommend 路徑已掛載 (Active Mount)")
+            print("✅ [地圖] /recommend 介面優化版已掛載")
 
     async def handle_recommend(self, request):
         try:
             data = await request.json()
-            try:
-                lat = float(data.get('lat'))
-                lon = float(data.get('lon'))
-            except:
-                return web.Response(text="Invalid GPS", status=400)
+            lat, lon = float(data.get('lat')), float(data.get('lon'))
+            channel = self.bot.get_channel(int(os.getenv("MAP_CHANNEL_ID")))
+            
+            # 1. 發送讀取中訊息
+            msg = await channel.send(f"🔍 正在搜尋汐止區 ({lat:.4f}, {lon:.4f}) 附近的在地美食...")
 
-            channel_id = os.getenv("MAP_CHANNEL_ID")
-            channel = self.bot.get_channel(int(channel_id))
-            if not channel: return web.Response(text="Channel Not Found", status=404)
-
-            msg = await channel.send(f"🛰️ 收到汐止座標 ({lat}, {lon})，正在搜尋在地美食...")
-
-            # ✅ 修正點：改用你清單中最穩定的最新代號，並強化汐止在地搜尋指令
+            # 2. 呼叫 Gemini (使用最穩定的 flash-latest)
             model = genai.GenerativeModel('models/gemini-flash-latest')
             prompt = (
-                f"使用者目前位於座標 {lat}, {lon} (新北市汐止區)。"
-                f"請推薦該座標方圓 2 公里內的 5 個「在地美食」或「景點」。"
-                f"⚠️ 嚴格禁止推薦深坑、貓空、淡水或台北市中心等遙遠景點。"
-                f"請優先推薦汐止觀光夜市、忠孝東路商圈、中興路附近或遠雄廣場的店家。"
-                f"格式：名稱|介紹|類別|#標籤"
+                f"你是一個汐止在地嚮導。座標 {lat}, {lon} 就在汐止。"
+                f"請推薦 5 個距離此座標 2 公里內的在地美食或景點（嚴禁推薦深坑、貓空、台北市中心）。"
+                f"請嚴格遵守此格式，每行一個地點：名稱|介紹|類別|#標籤"
             )
             
             response = await asyncio.to_thread(model.generate_content, prompt)
             
+            # 3. 解析並建立 Embed (讓資訊直接顯示)
             places = []
+            embed = discord.Embed(title="📍 汐止在地人推薦清單", color=discord.Color.orange())
+            embed.set_footer(text=f"座標: {lat}, {lon} | 由 Gemini 2.0 提供")
+
             if response.text:
-                for line in response.text.strip().split('\n'):
+                lines = response.text.strip().split('\n')
+                for i, line in enumerate(lines[:5]):
                     parts = line.split('|')
                     if len(parts) >= 4:
-                        places.append(LocationData(parts[0][:100], parts[1], parts[2], parts[3]))
+                        p = LocationData(parts[0], parts[1], parts[2], parts[3])
+                        places.append(p)
+                        # 將詳情直接寫入 Embed Field，不用點開就看得到！
+                        embed.add_field(
+                            name=f"{i+1}. {p.name} ({p.category})",
+                            value=f"{p.description}\n`{p.tags}`",
+                            inline=False
+                        )
 
             if places:
                 view = View()
                 view.add_item(PlaceSelect(places))
-                await msg.edit(content=f"📍 汐止區 ({lat:.4f}, {lon:.4f}) 附近推薦：", view=view)
-                return web.Response(text="OK")
-            
-            return web.Response(text="No Data")
+                await msg.edit(content="✨ 幫您找到了以下熱點：", embed=embed, view=view)
+            else:
+                await msg.edit(content="❌ 暫時找不到附近推薦，請稍後再試。")
+                
+            return web.Response(text="OK")
         except Exception as e:
             print(f"Map Error: {e}")
             return web.Response(text=str(e), status=500)
