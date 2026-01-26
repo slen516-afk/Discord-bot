@@ -51,10 +51,13 @@ class MapServer(commands.Cog):
         if api_key: genai.configure(api_key=api_key)
 
     # 當這個模組載入時，自動去掛載到 Web Server
-    @commands.Cog.listener()
-    async def on_ready(self):
-        # 等待 Web Server 啟動
-        await asyncio.sleep(1) 
+    async def cog_load(self):
+        web_cog = self.bot.get_cog('WebServer')
+        if web_cog:
+            web_cog.add_route('POST', '/recommend', self.handle_recommend)
+            print("✅ [地圖] /recommend 路徑已掛載 (Active Mount)")
+        else:
+            print("❌ [地圖] 無法掛載！找不到 WebServer") 
         web_cog = self.bot.get_cog('WebServer')
         if web_cog:
             # 🔌 把自己的 handle_recommend 插到總機上
