@@ -5,7 +5,7 @@ import json
 import os
 
 # 🔒 設定你指定的頻道 ID
-TODO_CHANNEL_ID = 1046731966516572240
+TODO_CHANNEL_ID = 1046731966516572240 
 DATA_FILE = "team_todo_list.json"
 
 # --- 🛠️ 資料處理區 ---
@@ -32,6 +32,9 @@ class AddTaskModal(Modal, title="新增待辦事項"):
         self.cog = cog
 
     async def on_submit(self, interaction: discord.Interaction):
+        # ✅ 重點 1：先告訴 Discord "收到，請稍等"，這樣就不會跳錯誤也不會發訊息
+        await interaction.response.defer()
+
         data = load_data()
         owner = self.owner_name.value if self.owner_name.value else interaction.user.display_name
         
@@ -43,16 +46,14 @@ class AddTaskModal(Modal, title="新增待辦事項"):
         data["shared"].append(new_item)
         save_data(data)
         
-        # 更新面板
+        # 背景靜默更新面板
         await self.cog.update_dashboard()
-        await interaction.response.send_message(f"✅ 已新增：{self.task_content.value}", ephemeral=True)
 
 # --- 🗑️ 2. 刪除任務的下拉選單 ---
 class DeleteSelect(Select):
     def __init__(self, tasks, cog):
         self.cog = cog
         options = []
-        # 只列出前 25 個任務 (Discord 限制)
         for i, task in enumerate(tasks[:25]):
             label = task['task'][:25]
             desc = f"由 {task['owner']} 建立"
@@ -64,13 +65,18 @@ class DeleteSelect(Select):
         index = int(self.values[0])
         data = load_data()
         
+        task_name = "未知任務"
         if 0 <= index < len(data["shared"]):
             removed = data["shared"].pop(index)
+            task_name = removed['task']
             save_data(data)
             await self.cog.update_dashboard()
-            await interaction.response.send_message(f"🗑️ 已移除：{removed['task']}", ephemeral=True)
+            
+            # ✅ 重點 2：不要發新訊息，而是「編輯」原本那個選單訊息
+            # 把選單拿掉 (view=None)，改成顯示一行文字就好
+            await interaction.response.edit_message(content=f"🗑️ 已移除：**{task_name}**", view=None)
         else:
-            await interaction.response.send_message("❌ 任務好像已經不在了！", ephemeral=True)
+            await interaction.response.edit_message(content="❌ 任務好像已經不在了！", view=None)
 
 class DeleteView(View):
     def __init__(self, tasks, cog):
@@ -80,37 +86,39 @@ class DeleteView(View):
 # --- 🎛️ 3. 主控制面板按鈕 (永久駐留) ---
 class DashboardView(View):
     def __init__(self, cog):
-        super().__init__(timeout=None) # 這裡很重要，讓按鈕永遠有效
+        super().__init__(timeout=None)
         self.cog = cog
 
     @discord.ui.button(label="➕ 新增任務", style=discord.ButtonStyle.success, custom_id="todo:add_btn", emoji="📝")
     async def add_callback(self, interaction: discord.Interaction, button: Button):
+        # 彈出視窗必須用 send_modal，不能 defer
         await interaction.response.send_modal(AddTaskModal(self.cog))
 
     @discord.ui.button(label="🗑️ 完成/移除", style=discord.ButtonStyle.danger, custom_id="todo:del_btn", emoji="✅")
     async def delete_callback(self, interaction: discord.Interaction, button: Button):
         data = load_data()
         if not data["shared"]:
+            # 這裡用 ephemeral=True 是合理的，因為是警告，且只有自己看得到
             return await interaction.response.send_message("💤 目前沒有任何任務喔！", ephemeral=True)
         
-        # 傳送一個暫時的選單給使用者選
+        # 這裡必須發送選單，但我們設定為 ephemeral (只有自己看得到)
+        # 後續選擇後，上面的 DeleteSelect 會把它編輯掉，不會留垃圾
         await interaction.response.send_message("請選擇要移除的項目：", view=DeleteView(data["shared"], self.cog), ephemeral=True)
 
-    @discord.ui.button(label="🔄 重新整理", style=discord.ButtonStyle.secondary, custom_id="todo:refresh_btn")
+    @discord.ui.button(label="🔄", style=discord.ButtonStyle.secondary, custom_id="todo:refresh_btn")
     async def refresh_callback(self, interaction: discord.Interaction, button: Button):
+        # ✅ 重點 3：重新整理時，完全不要說話，只轉圈圈然後更新背景
+        await interaction.response.defer()
         await self.cog.update_dashboard()
-        await interaction.response.send_message("已重新整理面板！", ephemeral=True)
 
 # --- ⚙️ 4. 主要邏輯 (Cog) ---
 class Todo(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    # 當 Cog 載入時，嘗試恢復監聽按鈕
     async def cog_load(self):
         self.bot.add_view(DashboardView(self))
 
-    # 更新面板的核心功能
     async def update_dashboard(self):
         channel = self.bot.get_channel(TODO_CHANNEL_ID)
         if not channel: return
@@ -119,7 +127,6 @@ class Todo(commands.Cog):
         tasks = data.get("shared", [])
         msg_id = data.get("msg_id")
 
-        # 製作 Embed 內容
         embed = discord.Embed(title="🔥 團隊待辦事項看版", description="點擊下方按鈕來管理任務 👇", color=discord.Color.gold())
         
         if tasks:
@@ -130,31 +137,28 @@ class Todo(commands.Cog):
         else:
             embed.add_field(name="狀態", value="🎉 目前沒有待辦事項，大家辛苦了！", inline=False)
 
-        embed.set_footer(text="最後更新時間")
+        embed.set_footer(text="即時同步中...")
         embed.timestamp = discord.utils.utcnow()
 
-        # 嘗試編輯舊訊息，如果找不到就發新的
         if msg_id:
             try:
                 msg = await channel.fetch_message(msg_id)
                 await msg.edit(embed=embed, view=DashboardView(self))
                 return
             except discord.NotFound:
-                pass # 舊訊息被刪了，準備發新的
+                pass
 
-        # 發送新訊息並記錄 ID
         msg = await channel.send(embed=embed, view=DashboardView(self))
         data["msg_id"] = msg.id
         save_data(data)
 
-    # 初始化指令：只在第一次架設時用一次
     @commands.command()
     async def init_todo(self, ctx):
         if ctx.channel.id != TODO_CHANNEL_ID:
             return await ctx.send(f"❌ 請去 <#{TODO_CHANNEL_ID}> 使用此指令！")
         
-        await ctx.message.delete() # 刪除使用者的指令
-        await self.update_dashboard() # 建立面板
+        await ctx.message.delete()
+        await self.update_dashboard()
 
 async def setup(bot):
     await bot.add_cog(Todo(bot))
