@@ -28,7 +28,10 @@ class PlaceSelect(Select):
 
     async def callback(self, interaction: discord.Interaction):
         place = self.places[int(self.values[0])]
+        
+        # 使用標準 Google Maps 搜尋連結參數
         search_query = urllib.parse.quote(place.name)
+        # api=1 確保喚起 App，query 放地點名稱
         map_url = f"https://www.google.com/maps/search/?api=1&query={search_query}"
         
         view = View()
@@ -59,9 +62,10 @@ class MapServer(commands.Cog):
             # 2. 呼叫 Gemini (使用最穩定的 flash-latest)
             model = genai.GenerativeModel('models/gemini-flash-latest')
             prompt = (
-                f"你是一個汐止在地嚮導。座標 {lat}, {lon} 就在汐止。"
-                f"請推薦 5 個距離此座標 2 公里內的在地美食或景點（嚴禁推薦深坑、貓空、台北市中心）。"
-                f"請嚴格遵守此格式，每行一個地點：名稱|介紹|類別|#標籤"
+                f"請根據座標 {lat}, {lon} 判斷所在行政區。"
+                f"並推薦 5 個距離此座標 1.5 公里內的「在地美食」或「知名景點」。"
+                f"請排除連鎖速食店（如麥當勞、肯德基）。"
+                f"請嚴格遵守此格式，每行一個地點：名稱|介紹(30字內)|類別|#標籤"
             )
             
             response = await asyncio.to_thread(model.generate_content, prompt)
