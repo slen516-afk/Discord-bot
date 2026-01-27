@@ -5,7 +5,7 @@ import json
 import os
 
 # 🔒 設定你指定的頻道 ID
-TODO_CHANNEL_ID = 1463412543128211641
+TODO_CHANNEL_ID = 1046731966516572240
 DATA_FILE = "team_todo_list.json"
 
 # --- 🛠️ 資料處理區 ---
