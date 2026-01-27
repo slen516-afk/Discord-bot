@@ -57,7 +57,7 @@ class MapServer(commands.Cog):
             channel = self.bot.get_channel(int(os.getenv("MAP_CHANNEL_ID")))
             
             # 1. 發送讀取中訊息
-            msg = await channel.send(f"🔍 正在搜尋汐止區 ({lat:.4f}, {lon:.4f}) 附近的在地美食...")
+            msg = await channel.send(f"正在搜尋附近的景點...")
 
             # 2. 呼叫 Gemini (使用最穩定的 flash-latest)
             model = genai.GenerativeModel('models/gemini-flash-latest')
@@ -72,7 +72,7 @@ class MapServer(commands.Cog):
             
             # 3. 解析並建立 Embed (讓資訊直接顯示)
             places = []
-            embed = discord.Embed(title="📍 汐止在地人推薦清單", color=discord.Color.orange())
+            embed = discord.Embed(title="推薦清單", color=discord.Color.orange())
             embed.set_footer(text=f"座標: {lat}, {lon} | 由 Gemini 2.0 提供")
 
             if response.text:
