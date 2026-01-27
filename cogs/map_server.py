@@ -57,7 +57,7 @@ class MapServer(commands.Cog):
             channel = self.bot.get_channel(int(os.getenv("MAP_CHANNEL_ID")))
             
             # 1. 發送讀取中訊息
-            msg = await channel.send(f"正在搜尋附近的景點...")
+            msg = await channel.send(f"正在搜尋附近...")
 
             # 2. 呼叫 Gemini (使用最穩定的 flash-latest)
             model = genai.GenerativeModel('models/gemini-flash-latest')
@@ -92,9 +92,9 @@ class MapServer(commands.Cog):
             if places:
                 view = View()
                 view.add_item(PlaceSelect(places))
-                await msg.edit(content="✨ 幫您找到了以下熱點：", embed=embed, view=view)
+                await msg.edit(content="幫您找到了以下熱點：", embed=embed, view=view)
             else:
-                await msg.edit(content="❌ 暫時找不到附近推薦，請稍後再試。")
+                await msg.edit(content="暫時找不到附近推薦，請稍後再試。")
                 
             return web.Response(text="OK")
         except Exception as e:
