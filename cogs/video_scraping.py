@@ -25,7 +25,12 @@ class VideoScraping(commands.Cog):
             "HealthyGamerGG":"UClHVl2N3jPEbkNJVx-ItQIQ",
             "Mark Manson":"UC0TnW9acNxqeojxXDMbohcA",
             "Prince Ea":"UCDgUAAHgsV2fFZQm2fIWBnA",
-            "Alex Hormozi":"UCUyDOdBWhC1MCxEjC46d-zw"
+            "Alex Hormozi":"UCUyDOdBWhC1MCxEjC46d-zw",
+            "Tech with Tim":"UCZirJBCIZsSgsSPn-uWVSfg",
+            "Sajjaad Khader":"UC7zZ2-Q_oxbUaoMVL0z51wg",
+
+            
+            
         }
         
         # 記錄上次影片 ID
