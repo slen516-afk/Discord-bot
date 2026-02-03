@@ -26,7 +26,8 @@ class VideoScraping(commands.Cog):
             "Mark Manson":"UC0TnW9acNxqeojxXDMbohcA",
             "Prince Ea":"UCDgUAAHgsV2fFZQm2fIWBnA",
             "Alex Hormozi":"UCUyDOdBWhC1MCxEjC46d-zw",
-            "Tech with Tim":"UCZirJBCIZsSgsSPn-uWVSfg",
+            "Tech with Tim":"UC4JX40jDee_tINbkjycV4Sg",
+            
             "Sajjaad Khader":"UC7zZ2-Q_oxbUaoMVL0z51wg",
 
             
